@@ -357,12 +357,12 @@ piio_error_t piio_initialize(void)
 	{
 		return PIIO_ERROR_NOT_ROOT;
 	}
-#endif
 
 	if(PIIO_OK != (rc = load_pi_version()))
 	{
 		return rc;
 	}
+#endif
 
 	if(PIIO_OK != (rc = map_peripherals()))
 	{
@@ -466,48 +466,5 @@ void piio_write_gpio(uint32_t gpio, uint32_t val)
 {
 	write_bcm(gpio_to_bcm[gpio & (PIIO_MAX_PINS - 1)], val);
 }
-
-static uint32_t rdtsc32(void)
-{
-	uint32_t r = 0;
-	asm volatile("mrc p15, 0, %0, c9, c13, 0" : "=r"(r) );
-	return r;
-}
-
-int hack(void)
-{
-	uint32_t i;
-
-	printf("Pin 0: %d\n", piio_set_mode_pin(0, PIIO_MODE_OUTPUT));
-	printf("Pin 1: %d\n", piio_set_mode_pin(1, PIIO_MODE_OUTPUT));
-	printf("Pin 3: %d\n", piio_set_mode_pin(3, PIIO_MODE_OUTPUT));
-
-	for(i = 0; ; ++i)
-	{
-		piio_write_pin(3, i & 1);
-		sleep(1);
-
-		printf("Hello\n");
-	}
-}
-
-int main(int argc, const char *argv[])
-{
-	piio_error_t rc;
-
-	if(PIIO_OK != (rc = piio_initialize()))
-	{
-		printf("Initialize failed with: %d\n", rc);
-		return -1;
-	}
-
-	printf("Successfully initialized PIIO\n");
-
-	hack();
-
-	return 0;
-}
-
-
 
 
