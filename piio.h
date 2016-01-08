@@ -24,8 +24,8 @@
 // PIIO_KERNEL_BOARD_REV correctly. These are auto detected for user-mode
 // applications.
 //
-#define PIIO_KERNEL_MODULE
-#define PIIO_KERNEL_GPIO_BASE PIIO_KERNEL_GPIO_BASE_PI2
+//#define PIIO_KERNEL_MODULE
+//#define PIIO_KERNEL_GPIO_BASE PIIO_KERNEL_GPIO_BASE_PI2
 // #define PIIO_KERNEL_MODULE
 // #define PIIO_KERNEL_GPIO_BASE /* PIIO_KERNEL_GPIO_BASE_PI1
 //                               or PIIO_KERNEL_GPIO_BASE_PI2 */
@@ -72,7 +72,8 @@ piio_mode_t;
 //
 // piio_initialize
 //
-// Initializes PIIO. Call it before calling any other function of the library.
+// Initializes PIIO. Call it before calling any other function of the
+// library.
 //
 piio_error_t piio_initialize(void);
 
@@ -93,6 +94,21 @@ uint32_t piio_read_gpio(uint32_t gpio);
 //
 void piio_write_pin(uint32_t pin, uint32_t val);
 void piio_write_gpio(uint32_t gpio, uint32_t val);
+
+//
+// piio_write_word_pin & piio_write_word_gpio
+//
+// Writes a word "atomically". Convenient for writing to a data bus.
+// Provide the pins corresponding to the word with the most significant
+// bit-pin first.
+//
+// ex:
+// If you call it with: piio_write_word_pin(0x0A, 4, 11, 13, 15, 16),
+// pins 11 and 15 go high, and pins 13 and 16 low.
+//
+void piio_write_word_pin(uint32_t word, int num_pins, ...);
+void piio_write_word_gpio(uint32_t word, int num_pins, ...);
+
 
 #endif
 

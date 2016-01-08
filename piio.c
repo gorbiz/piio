@@ -6,6 +6,7 @@
 //
 #include <stdio.h>
 #include <string.h>
+#include <stdarg.h>
 #include <time.h>
 #include <ctype.h>
 #include <unistd.h>
@@ -59,6 +60,14 @@ static const int piio_board_rev = PIIO_KERNEL_BOARD_REV;
 	#define PIIO_FIX_LEVEL(x) (x)
 #endif
 
+#ifdef PIIO_CLUMSY
+	#define PIIO_FROM_PIN(x) 	pin_to_bcm[(x) & (PIIO_MAX_PINS - 1)]
+	#define PIIO_FROM_GPIO(x)	gpio_to_bcm[(x) & (PIIO_MAX_PINS - 1)]
+#else
+	#define PIIO_FROM_PIN(x) 	pin_to_bcm[(x)]
+	#define PIIO_FROM_GPIO(x)	gpio_to_bcm[(x)]
+#endif
+
 #pragma pack(push, 1)
 
 typedef struct piio_gpio
@@ -81,13 +90,13 @@ static volatile piio_gpio_t *gpio	= NULL;
 static const int *pin_to_bcm		= NULL;
 static const int *gpio_to_bcm		= NULL;
 
-static const uint8_t bcm_to_rwreg[] =
+static const uint32_t bcm_to_rwreg[] =
 {
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
 };
 
-static const uint8_t bcm_to_modereg[] =
+static const uint32_t bcm_to_modereg[] =
 {
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 	1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
@@ -97,7 +106,7 @@ static const uint8_t bcm_to_modereg[] =
 	5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
 };
 
-static const uint8_t bcm_to_modeshift[] =
+static const uint32_t bcm_to_modeshift[] =
 {
 	0, 3, 6, 9, 12, 15, 18, 21, 24, 27,
 	0, 3, 6, 9, 12, 15, 18, 21, 24, 27,
@@ -408,12 +417,12 @@ static piio_error_t set_pin_mode(int bcm, piio_mode_t mode)
 
 piio_error_t piio_set_mode_pin(uint32_t pin, piio_mode_t mode)
 {
-	return set_pin_mode(pin_to_bcm[pin & (PIIO_MAX_PINS - 1)], mode);
+	return set_pin_mode(PIIO_FROM_PIN(pin), mode);
 }
 
 piio_error_t piio_set_mode_gpio(uint32_t gpio, piio_mode_t mode)
 {
-	return set_pin_mode(gpio_to_bcm[gpio & (PIIO_MAX_PINS - 1)], mode);
+	return set_pin_mode(PIIO_FROM_GPIO(gpio), mode);
 }
 
 static uint32_t read_bcm(int bcm)
@@ -425,17 +434,17 @@ static uint32_t read_bcm(int bcm)
 	}
 #endif
 
-	return PIIO_FIX_LEVEL(gpio->lvlreg[bcm_to_rwreg[bcm]] & (1 << (bcm & 0x1F)));
+	return PIIO_FIX_LEVEL(gpio->lvlreg[bcm_to_rwreg[bcm]] & (1 << (uint32_t)bcm));
 }
 
 uint32_t piio_read_pin(uint32_t pin)
 {
-	return read_bcm(pin_to_bcm[pin & (PIIO_MAX_PINS - 1)]);
+	return read_bcm(PIIO_FROM_PIN(pin));
 }
 
 uint32_t piio_read_gpio(uint32_t gpio)
 {
-	return read_bcm(gpio_to_bcm[gpio & (PIIO_MAX_PINS - 1)]);
+	return read_bcm(PIIO_FROM_GPIO(gpio));
 }
 
 static void write_bcm(int bcm, uint32_t val)
@@ -449,11 +458,11 @@ static void write_bcm(int bcm, uint32_t val)
 
 	if(val)
 	{
-		gpio->setreg[bcm_to_rwreg[bcm]] = (1 << (bcm & 0x1F));
+		gpio->setreg[bcm_to_rwreg[bcm]] = (1 << bcm);
 	}
 	else
 	{
-		gpio->clrreg[bcm_to_rwreg[bcm]] = (1 << (bcm & 0x1F));
+		gpio->clrreg[bcm_to_rwreg[bcm]] = (1 << bcm);
 	}
 }
 
@@ -465,6 +474,66 @@ void piio_write_pin(uint32_t pin, uint32_t val)
 void piio_write_gpio(uint32_t gpio, uint32_t val)
 {
 	write_bcm(gpio_to_bcm[gpio & (PIIO_MAX_PINS - 1)], val);
+}
+
+static uint32_t get_bcm_from_pin(uint32_t pin)
+{
+	return PIIO_FROM_PIN(pin);
+}
+
+static uint32_t get_bcm_from_gpio(uint32_t gpio)
+{
+	return PIIO_FROM_GPIO(gpio);
+}
+
+static void write_word(uint32_t (*fn_to_bcm)(uint32_t), uint32_t word, int num_pins, va_list args)
+{
+	int i;
+
+	uint32_t set_vals[2] = { 0, 0 };
+	uint32_t clr_vals[2] = { 0, 0 };
+
+	uint32_t pos = (1 << (((uint32_t)num_pins) - 1));
+
+	for(i = 0; i < num_pins; ++i)
+	{
+		const uint32_t target	= va_arg(args, uint32_t);
+		const uint32_t bcm		= fn_to_bcm(target);
+		const uint32_t index	= bcm_to_rwreg[bcm];
+
+		if(word & pos)
+		{
+			set_vals[index] |= 1 << bcm;
+		}
+		else
+		{
+			clr_vals[index] |= 1 << bcm;
+		}
+
+		pos >>= 1;
+	}
+
+	gpio->setreg[0] = set_vals[0];
+	gpio->setreg[1] = set_vals[1];
+
+	gpio->clrreg[0] = clr_vals[0];
+	gpio->clrreg[1] = clr_vals[1];
+}
+
+void piio_write_word_pin(uint32_t word, int num_pins, ...)
+{
+	va_list args;
+	va_start(args, num_pins);
+	write_word(get_bcm_from_pin, word, num_pins, args);
+	va_end(args);
+}
+
+void piio_write_word_gpio(uint32_t word, int num_pins, ...)
+{
+	va_list args;
+	va_start(args, num_pins);
+	write_word(get_bcm_from_gpio, word, num_pins, args);
+	va_end(args);
 }
 
 
