@@ -44,6 +44,8 @@ typedef enum piio_error
 	PIIO_ERROR_FAILED_TO_MAP,
 	PIIO_ERROR_INVALID_PIN,
 	PIIO_ERROR_INVALID_MODE,
+	PIIO_ERROR_INVALID_PINSET,
+	PIIO_ERROR_NOT_ENOUGH_MEMORY,
 	PIIO_ERROR_UNEXPECTED,
 }
 piio_error_t;
@@ -68,6 +70,8 @@ piio_mode_t;
 #else
 	#include <stdint.h>
 #endif
+
+typedef struct piio_wpinset piio_wpinset_t;
 
 //
 // piio_initialize
@@ -109,6 +113,10 @@ void piio_write_gpio(uint32_t gpio, uint32_t val);
 void piio_write_word_pin(uint32_t word, int num_pins, ...);
 void piio_write_word_gpio(uint32_t word, int num_pins, ...);
 
+piio_error_t piio_wpinset_alloc_pin(piio_wpinset_t **pinset, int num_pins, ...);
+piio_error_t piio_wpinset_alloc_gpio(piio_wpinset_t **pinset, int num_pins, ...);
+piio_error_t piio_wpinset_word(piio_wpinset_t *pinset, uint32_t word);
+void piio_wpinset_free(piio_wpinset_t *pinset);
 
 #endif
 

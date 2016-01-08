@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
+#include <stdlib.h>
 #include <time.h>
 #include <ctype.h>
 #include <unistd.h>
@@ -20,6 +21,9 @@
 
 static int piio_model		= 0;
 static int piio_board_rev	= 0;
+
+#define piio_alloc(n) malloc((n))
+#define piio_free(p)  free((p))
 
 #else
 //
@@ -49,8 +53,12 @@ static int piio_board_rev	= 0;
 //
 #include <asm/io.h>
 #include <linux/kernel.h>
+#include <linux/vmalloc.h>
 
 static const int piio_board_rev = PIIO_KERNEL_BOARD_REV;
+
+#define piio_alloc(n) vmalloc((n))
+#define piio_free(p)  vfree((p))
 
 #endif
 
@@ -83,6 +91,19 @@ typedef struct piio_gpio
 piio_gpio_t;
 
 #pragma pack(pop)
+
+typedef struct piio_word_mapping
+{
+	uint32_t setreg[2];
+	uint32_t clrreg[2];
+}
+piio_word_mapping_t;
+
+struct piio_wpinset
+{
+	size_t size;
+	piio_word_mapping_t *word_mapping;
+};
 
 #define PIIO_MAX_PINS 64
 
@@ -536,4 +557,139 @@ void piio_write_word_gpio(uint32_t word, int num_pins, ...)
 	va_end(args);
 }
 
+static piio_error_t wpinset_alloc(uint32_t (*fn_to_bcm)(uint32_t), piio_wpinset_t **pinset, int num_pins, va_list args)
+{
+	int i;
+	uint32_t word;
+	size_t alloc_size;
+	va_list start_args = args;
+
+	piio_error_t rc = PIIO_ERROR_NOT_ENOUGH_MEMORY;
+	piio_wpinset_t *ps = NULL;
+
+	//
+	// TODO : Might want to check here if there are too many bits... like 32-bits makes no sense to map like this.
+	//        Blame the user for now.
+	//
+	if(NULL == (ps = piio_alloc(sizeof(*ps))))
+	{
+		goto cleanup;
+	}
+
+	ps->size	= (size_t)(1 << num_pins);
+	alloc_size	= sizeof(*ps->word_mapping) * ps->size;
+
+	if(NULL == (ps->word_mapping = piio_alloc(alloc_size)))
+	{
+		goto cleanup;
+	}
+
+	memset(ps->word_mapping, 0, alloc_size);
+
+	for(word = 0; word < ps->size; ++word)
+	{
+		uint32_t pos = (1 << (((uint32_t)num_pins) - 1));
+		piio_word_mapping_t * const mapping = ps->word_mapping + word;
+
+		for(i = 0; i < num_pins; ++i)
+		{
+			const uint32_t target	= va_arg(args, uint32_t);
+			const uint32_t bcm		= fn_to_bcm(target);
+			const uint32_t index	= bcm_to_rwreg[bcm];
+
+			if(word & pos)
+			{
+				mapping->setreg[index] |= 1 << bcm;
+			}
+			else
+			{
+				mapping->clrreg[index] |= 1 << bcm;
+			}
+
+			pos >>= 1;
+		}
+
+		args = start_args;
+	}
+
+	for(i = 0; i < num_pins; ++i)
+	{
+		const piio_error_t rc = set_pin_mode(fn_to_bcm(va_arg(args, uint32_t)), PIIO_MODE_OUTPUT);
+
+		if(PIIO_OK != rc)
+		{
+			goto cleanup;
+		}
+	}
+
+	*pinset = ps;
+	return PIIO_OK;
+
+cleanup:
+	piio_wpinset_free(ps);
+	return rc;
+}
+
+piio_error_t piio_wpinset_alloc_pin(piio_wpinset_t **pinset, int num_pins, ...)
+{
+	piio_error_t rc;
+
+	va_list args;
+	va_start(args, num_pins);
+	rc = wpinset_alloc(get_bcm_from_pin, pinset, num_pins, args);
+	va_end(args);
+
+	return rc;
+}
+
+piio_error_t piio_wpinset_alloc_gpio(piio_wpinset_t **pinset, int num_pins, ...)
+{
+	piio_error_t rc;
+
+	va_list args;
+	va_start(args, num_pins);
+	rc = wpinset_alloc(get_bcm_from_gpio, pinset, num_pins, args);
+	va_end(args);
+
+	return rc;
+}
+
+piio_error_t piio_wpinset_word(piio_wpinset_t *pinset, uint32_t word)
+{
+	const piio_word_mapping_t *mapping;
+
+#ifdef PIIO_CLUMSY
+	if(NULL == pinset || NULL == pinset->word_mapping)
+	{
+		return PIIO_ERROR_INVALID_PINSET;
+	}
+
+	if(word >= pinset->size)
+	{
+		return PIIO_ERROR_INVALID_PIN;
+	}
+#endif
+
+	mapping = (pinset->word_mapping + word);
+
+	gpio->setreg[0] = mapping->setreg[0];
+	gpio->setreg[1] = mapping->setreg[1];
+	gpio->clrreg[0] = mapping->clrreg[0];
+	gpio->clrreg[1] = mapping->clrreg[1];
+
+	return PIIO_OK;
+}
+
+void piio_wpinset_free(piio_wpinset_t *pinset)
+{
+	if(pinset)
+	{
+		if(pinset->word_mapping)
+		{
+			piio_free(pinset->word_mapping);
+		}
+
+		piio_free(pinset);
+	}
+}
 
